@@ -1,0 +1,171 @@
+/*===========================================================================
+ * billing_batch.pc
+ *
+ * Nightly billing batch. Reads pending invoice headers from INVOICE_QUEUE,
+ * recomputes the commercial tier, applies discount and VAT, then writes the
+ * result back to INVOICE and marks the queue row as processed.
+ *
+ * Build (reference only - not buildable in this sandbox):
+ *     proc iname=billing_batch.pc oname=billing_batch.c
+ *     cc -o billing_batch billing_batch.c -lclntsh
+ *
+ * WARNING
+ *   - Bind variable names are referenced by the operations monitoring scripts.
+ *     Renaming one silently breaks reconciliation.
+ *   - The audit log insert is mandatory for SOX compliance. It must never be
+ *     removed, reordered after the COMMIT, or made conditional.
+ *===========================================================================*/
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+    char      db_user[31];
+    char      db_pwd[31];
+    char      db_conn[64];
+
+    char      v_invoice_no[16];
+    char      v_cust_id[11];
+    char      v_country[3];
+    double    v_net_amount;
+    double    v_rolling_revenue;
+    double    v_discount_rate;
+    double    v_discount_amount;
+    double    v_vat_rate;
+    double    v_vat_amount;
+    double    v_total_amount;
+    char      v_tier[9];
+    short     ind_rolling_revenue;
+EXEC SQL END DECLARE SECTION;
+
+static void sql_error(char *msg)
+{
+    EXEC SQL WHENEVER SQLERROR CONTINUE;
+    fprintf(stderr, "%s\n", msg);
+    fprintf(stderr, "%.*s\n", sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+    EXEC SQL ROLLBACK RELEASE;
+    exit(1);
+}
+
+/*---------------------------------------------------------------------------
+ * Resolves the commercial tier from the rolling 12-month revenue.
+ * Thresholds are inclusive: exactly 10000 is SILVER, exactly 50000 is GOLD.
+ *-------------------------------------------------------------------------*/
+static void resolve_tier(double rolling_revenue, char *tier_out, double *rate_out)
+{
+    if (rolling_revenue >= 50000.0)
+    {
+        strcpy(tier_out, "GOLD");
+        *rate_out = 0.10;
+    }
+    else if (rolling_revenue >= 10000.0)
+    {
+        strcpy(tier_out, "SILVER");
+        *rate_out = 0.05;
+    }
+    else
+    {
+        strcpy(tier_out, "STANDARD");
+        *rate_out = 0.0;
+    }
+}
+
+static double round_amount(double value)
+{
+    /* Half-up rounding on 2 decimals, aligned with the Java service. */
+    return (double)((long)(value * 100.0 + (value >= 0 ? 0.5 : -0.5))) / 100.0;
+}
+
+int main(int argc, char *argv[])
+{
+    long processed = 0;
+
+    strcpy(db_user, "billing_app");
+    strcpy(db_pwd,  "***REDACTED***");
+    strcpy(db_conn, "EMGPROD");
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error("CONNECT failed");
+    EXEC SQL CONNECT :db_user IDENTIFIED BY :db_pwd USING :db_conn;
+
+    EXEC SQL DECLARE queue_cur CURSOR FOR
+        SELECT q.invoice_no,
+               q.cust_id,
+               c.country_code,
+               q.net_amount,
+               c.rolling_revenue
+          FROM invoice_queue q,
+               customer c
+         WHERE q.cust_id = c.cust_id
+           AND q.status  = 'PENDING'
+         ORDER BY q.invoice_no;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error("OPEN queue_cur failed");
+    EXEC SQL OPEN queue_cur;
+
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    for (;;)
+    {
+        EXEC SQL FETCH queue_cur
+            INTO :v_invoice_no,
+                 :v_cust_id,
+                 :v_country,
+                 :v_net_amount,
+                 :v_rolling_revenue :ind_rolling_revenue;
+
+        if (ind_rolling_revenue == -1)
+        {
+            v_rolling_revenue = 0.0;
+        }
+
+        resolve_tier(v_rolling_revenue, v_tier, &v_discount_rate);
+
+        v_discount_amount = round_amount(v_net_amount * v_discount_rate);
+
+        EXEC SQL WHENEVER SQLERROR DO sql_error("SELECT tax_rate failed");
+        EXEC SQL SELECT rate
+                   INTO :v_vat_rate
+                   FROM tax_rate
+                  WHERE country_code = :v_country
+                    AND rate_type    = 'STANDARD';
+
+        v_vat_amount   = round_amount((v_net_amount - v_discount_amount) * v_vat_rate);
+        v_total_amount = v_net_amount - v_discount_amount + v_vat_amount;
+
+        EXEC SQL WHENEVER SQLERROR DO sql_error("UPDATE invoice failed");
+        EXEC SQL UPDATE invoice
+                    SET discount_amount = :v_discount_amount,
+                        vat_amount      = :v_vat_amount,
+                        total_amount    = :v_total_amount,
+                        tier_code       = :v_tier,
+                        status          = 'CALCULATED'
+                  WHERE invoice_no      = :v_invoice_no;
+
+        /* SOX audit trail - mandatory, must stay inside the transaction */
+        EXEC SQL WHENEVER SQLERROR DO sql_error("INSERT audit_log failed");
+        EXEC SQL INSERT INTO audit_log
+                    (event_ts, event_type, entity_type, entity_id, actor, details)
+             VALUES (SYSTIMESTAMP, 'INVOICE_CALC', 'INVOICE', :v_invoice_no,
+                     'BILLING_BATCH',
+                     'tier=' || :v_tier || ' total=' || TO_CHAR(:v_total_amount));
+
+        EXEC SQL WHENEVER SQLERROR DO sql_error("UPDATE invoice_queue failed");
+        EXEC SQL UPDATE invoice_queue
+                    SET status       = 'PROCESSED',
+                        processed_ts = SYSTIMESTAMP
+                  WHERE invoice_no   = :v_invoice_no;
+
+        EXEC SQL COMMIT;
+        processed++;
+    }
+
+    EXEC SQL WHENEVER SQLERROR CONTINUE;
+    EXEC SQL CLOSE queue_cur;
+    EXEC SQL COMMIT WORK RELEASE;
+
+    printf("billing_batch: %ld invoice(s) processed\n", processed);
+    return 0;
+}

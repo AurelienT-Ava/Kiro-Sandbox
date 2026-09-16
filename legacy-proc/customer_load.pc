@@ -1,0 +1,128 @@
+/*===========================================================================
+ * customer_load.pc
+ *
+ * Daily load of the customer reference data. Reads a flat file produced by
+ * the CRM, upserts CUSTOMER, and refreshes the rolling 12-month revenue used
+ * by billing_batch.pc to resolve the commercial tier.
+ *
+ * WARNING
+ *   - ROLLING_REVENUE feeds the tier calculation. Any change to the window
+ *     length or to the rounding must be mirrored in the Java billing service.
+ *   - Bind variable names are referenced by the monitoring scripts.
+ *===========================================================================*/
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+    char      db_user[31];
+    char      db_pwd[31];
+    char      db_conn[64];
+
+    char      v_cust_id[11];
+    char      v_name[81];
+    char      v_country[3];
+    double    v_rolling_revenue;
+    long      v_rows_loaded;
+EXEC SQL END DECLARE SECTION;
+
+static void sql_error(char *msg)
+{
+    EXEC SQL WHENEVER SQLERROR CONTINUE;
+    fprintf(stderr, "%s\n", msg);
+    fprintf(stderr, "%.*s\n", sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+    EXEC SQL ROLLBACK RELEASE;
+    exit(1);
+}
+
+static int parse_line(char *line)
+{
+    char *field;
+
+    field = strtok(line, ";");
+    if (field == NULL) return -1;
+    strncpy(v_cust_id, field, sizeof(v_cust_id) - 1);
+
+    field = strtok(NULL, ";");
+    if (field == NULL) return -1;
+    strncpy(v_name, field, sizeof(v_name) - 1);
+
+    field = strtok(NULL, ";");
+    if (field == NULL) return -1;
+    strncpy(v_country, field, sizeof(v_country) - 1);
+
+    field = strtok(NULL, ";\n");
+    if (field == NULL) return -1;
+    v_rolling_revenue = atof(field);
+
+    return 0;
+}
+
+int main(int argc, char *argv[])
+{
+    FILE *fp;
+    char  line[256];
+
+    if (argc < 2)
+    {
+        fprintf(stderr, "usage: customer_load <crm_export_file>\n");
+        return 2;
+    }
+
+    strcpy(db_user, "billing_app");
+    strcpy(db_pwd,  "***REDACTED***");
+    strcpy(db_conn, "EMGPROD");
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error("CONNECT failed");
+    EXEC SQL CONNECT :db_user IDENTIFIED BY :db_pwd USING :db_conn;
+
+    fp = fopen(argv[1], "r");
+    if (fp == NULL)
+    {
+        fprintf(stderr, "cannot open %s\n", argv[1]);
+        EXEC SQL ROLLBACK RELEASE;
+        return 2;
+    }
+
+    v_rows_loaded = 0;
+
+    while (fgets(line, sizeof(line), fp) != NULL)
+    {
+        if (parse_line(line) != 0)
+        {
+            fprintf(stderr, "skipping malformed line\n");
+            continue;
+        }
+
+        EXEC SQL WHENEVER SQLERROR DO sql_error("MERGE customer failed");
+        EXEC SQL MERGE INTO customer c
+            USING (SELECT :v_cust_id AS cust_id FROM dual) s
+               ON (c.cust_id = s.cust_id)
+        WHEN MATCHED THEN
+            UPDATE SET c.name             = :v_name,
+                       c.country_code     = :v_country,
+                       c.rolling_revenue  = :v_rolling_revenue,
+                       c.updated_ts       = SYSTIMESTAMP
+        WHEN NOT MATCHED THEN
+            INSERT (cust_id, name, country_code, rolling_revenue, created_ts)
+            VALUES (:v_cust_id, :v_name, :v_country, :v_rolling_revenue, SYSTIMESTAMP);
+
+        v_rows_loaded++;
+
+        if ((v_rows_loaded % 1000) == 0)
+        {
+            EXEC SQL COMMIT;
+        }
+    }
+
+    fclose(fp);
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error("final COMMIT failed");
+    EXEC SQL COMMIT WORK RELEASE;
+
+    printf("customer_load: %ld row(s) loaded\n", v_rows_loaded);
+    return 0;
+}

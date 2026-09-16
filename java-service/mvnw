@@ -1,0 +1,36 @@
+#!/bin/sh
+# ---------------------------------------------------------------------------
+# Maven Wrapper for the EMG Kiro sandbox.
+#
+# Downloads Apache Maven on first use into ~/.m2/wrapper/ and runs it, so that
+# nobody needs Maven pre-installed. Requires a JDK 21 and curl or wget.
+# ---------------------------------------------------------------------------
+set -e
+
+MAVEN_VERSION="3.9.9"
+WRAPPER_HOME="${HOME}/.m2/wrapper"
+MAVEN_HOME="${WRAPPER_HOME}/apache-maven-${MAVEN_VERSION}"
+DIST_URL="https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz"
+
+if [ ! -x "${MAVEN_HOME}/bin/mvn" ]; then
+    echo "Apache Maven ${MAVEN_VERSION} not found locally."
+    echo "Downloading it once into ${MAVEN_HOME} ..."
+    mkdir -p "${WRAPPER_HOME}"
+    TMPDIR_DL=$(mktemp -d)
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "${DIST_URL}" -o "${TMPDIR_DL}/maven.tar.gz"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q "${DIST_URL}" -O "${TMPDIR_DL}/maven.tar.gz"
+    else
+        echo "ERROR: neither curl nor wget is available." >&2
+        echo "Install Maven manually, or install curl." >&2
+        exit 1
+    fi
+
+    tar -xzf "${TMPDIR_DL}/maven.tar.gz" -C "${WRAPPER_HOME}"
+    rm -rf "${TMPDIR_DL}"
+    echo "Done."
+fi
+
+exec "${MAVEN_HOME}/bin/mvn" "$@"
