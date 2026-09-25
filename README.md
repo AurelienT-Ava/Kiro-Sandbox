@@ -10,7 +10,7 @@ module.
 java-service/    Spring Boot 3 / Java 21 billing service. Builds, runs, tests pass.
 legacy-proc/     Oracle Pro*C billing batch. Read only, no build environment.
 docs/            Business rules for billing. Deliberately incomplete.
-data/            Reference data and a fake .env, used for the guardrail exercises.
+data/            Reference data and environment configuration.
 .kiro/           Empty. You will fill it during Lab 1.
 ```
 
@@ -103,14 +103,13 @@ try {
 }
 ```
 
-## A word of warning
-
-This repository contains **deliberately introduced defects**. They are there so
-you can practise finding and fixing them with Kiro. Do not assume the code is
-correct because the tests are green: the tests are part of the exercise.
+## The reference
 
 The business rules in `docs/billing-rules.md` are the reference. Where the code
-and the documentation disagree, the documentation wins.
+and the documentation disagree, **the documentation wins**.
+
+A green test suite is not evidence that the code matches the rules. The tests
+cover what someone chose to cover, which is never everything.
 
 ## Ground rule
 

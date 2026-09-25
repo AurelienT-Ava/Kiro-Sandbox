@@ -62,7 +62,7 @@ payload `{ "error": string, "code": number }`.
 
 These points are not settled yet. Do not assume an answer.
 
-- Credit notes: no rule is defined at this stage. See the Lab 2 exercise.
+- Credit notes: no rule is defined at this stage.
 - Multi-currency: out of scope for now, everything is in EUR.
 - Retroactive tier changes: behaviour undefined when a customer changes tier
   between the invoice issue date and the batch run.
