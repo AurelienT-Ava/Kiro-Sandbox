@@ -9,8 +9,8 @@ There is **no Pro\*C build environment in this sandbox**. These files are here
 for comprehension, documentation and impact analysis only. You are not expected
 to compile them, and the agent must not be allowed to modify them.
 
-Lab 1 walks through setting up a guardrail (`permissions.yaml`) that blocks
-writes to `*.pc` files, precisely so this stays true.
+You will set up a guardrail that blocks writes to `*.pc` files, precisely so
+this stays true.
 
 ## What the two programs do
 
@@ -30,7 +30,7 @@ two must agree, line for line, on:
 - the rounding applied to each monetary amount
 
 Any divergence produces invoices that reconcile differently between the batch
-and the API. Finding such a divergence is one of the Lab 1 exercises.
+and the API. 
 
 ## Constraints to respect
 

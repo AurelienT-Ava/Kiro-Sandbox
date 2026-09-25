@@ -1,5 +1,5 @@
 -- Export of the CUSTOMER table, sandbox extract.
--- Large generated file: used by the Lab 1 .kiroignore exercise.
+-- Large generated extract. Not needed to run the service.
 SET DEFINE OFF;
 INSERT INTO customer (cust_id, name, country_code, rolling_revenue) VALUES ('C-1001', 'Meridian Manufacturing', 'MA', 78112.14);
 INSERT INTO customer (cust_id, name, country_code, rolling_revenue) VALUES ('C-1002', 'Delta Solutions', 'FR', 43882.67);
