@@ -1,0 +1,10 @@
+target/
+*.class
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# NOTE: data/.env is deliberately committed in this sandbox.
+# It contains fake credentials and exists so the .kiroignore exercise
+# in Lab 1 has a realistic file to protect. Never do this on a real project.
