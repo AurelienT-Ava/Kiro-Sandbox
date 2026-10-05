@@ -1,5 +1,7 @@
 # Requirements Document
 
+test
+
 ## Introduction
 
 This feature adds credit note issuance to the EMG billing system. A credit note is a document that partially or fully reverses an existing invoice. It must reference the original invoice, apply the same calculation rules (discount, VAT, rounding), and produce negative amounts that offset the original charges. The feature extends the existing Java/Spring Boot REST API and must stay aligned with the legacy Pro*C batch calculation order defined in `docs/billing-rules.md`.
